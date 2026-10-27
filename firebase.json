@@ -1,0 +1,24 @@
+{
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "gourmetgogabriel",
+          "appId": "1:801358251872:android:6b79727277367247254005",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "gourmetgogabriel",
+          "configurations": {
+            "android": "1:801358251872:android:6b79727277367247254005"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,52 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId}/recipes/{recipeId} {
+      function isOwner() {
+        return request.auth != null && request.auth.uid == userId;
+      }
+
+      function hasValidRecipe() {
+        return request.resource.data.keys().hasAll([
+                 'mealId',
+                 'name',
+                 'imageUrl',
+                 'category',
+                 'area',
+                 'ingredients',
+                 'instructions',
+                 'source',
+                 'savedAt'
+               ])
+            && request.resource.data.keys().hasOnly([
+                 'mealId',
+                 'name',
+                 'imageUrl',
+                 'category',
+                 'area',
+                 'ingredients',
+                 'instructions',
+                 'source',
+                 'savedAt'
+               ])
+            && request.resource.data.mealId == recipeId
+            && request.resource.data.name is string
+            && request.resource.data.name.size() > 0
+            && request.resource.data.name.size() <= 200
+            && request.resource.data.imageUrl is string
+            && request.resource.data.category is string
+            && request.resource.data.area is string
+            && request.resource.data.ingredients is list
+            && request.resource.data.ingredients.size() <= 50
+            && request.resource.data.instructions is list
+            && request.resource.data.instructions.size() <= 100
+            && request.resource.data.source is string
+            && request.resource.data.savedAt is timestamp;
+      }
+
+      allow read, delete: if isOwner();
+      allow create, update: if isOwner() && hasValidRecipe();
+    }
+  }
+}
