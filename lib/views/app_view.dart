@@ -155,8 +155,15 @@ class _HomeViewState extends State<HomeView> {
   List<Recipe> _results = [];
   bool _loading = false;
   String? _error;
+  String? _category;
   int _tab = 0;
   String get _uid => FirebaseAuth.instance.currentUser!.uid;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSuggestions();
+  }
 
   @override
   void dispose() {
@@ -166,7 +173,7 @@ class _HomeViewState extends State<HomeView> {
 
   Future<void> _find() async {
     if (_search.text.trim().isEmpty) {
-      _message('Digite o nome de uma receita.');
+      await _loadSuggestions();
       return;
     }
     FocusScope.of(context).unfocus();
@@ -178,6 +185,38 @@ class _HomeViewState extends State<HomeView> {
       _results = await searchRecipes(_search.text.trim());
     } on Exception catch (error) {
       _error = 'Busca falhou: $error';
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _loadSuggestions() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      _results = await discoverRecipes();
+    } on Exception catch (error) {
+      _error = 'Não foi possível carregar receitas: $error';
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _filter(String? category) async {
+    setState(() {
+      _category = category;
+      _search.clear();
+      _loading = true;
+      _error = null;
+    });
+    try {
+      _results = category == null
+          ? await discoverRecipes()
+          : await filterRecipes(category);
+    } on Exception catch (error) {
+      _error = 'Não foi possível carregar receitas: $error';
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -214,7 +253,7 @@ class _HomeViewState extends State<HomeView> {
         ),
       ],
     ),
-    body: _tab == 0 ? _searchPage() : RecipeBookView(uid: _uid, onOpen: _open),
+    body: _tab == 0 ? _searchPage() : RecipeBookView(uid: _uid),
     bottomNavigationBar: NavigationBar(
       selectedIndex: _tab,
       onDestinationSelected: (index) => setState(() => _tab = index),
@@ -232,18 +271,55 @@ class _HomeViewState extends State<HomeView> {
     children: [
       Padding(
         padding: const EdgeInsets.all(16),
-        child: TextField(
-          controller: _search,
-          textInputAction: TextInputAction.search,
-          onSubmitted: (_) => _find(),
-          decoration: InputDecoration(
-            hintText: 'Busque uma receita',
-            prefixIcon: const Icon(Icons.search),
-            suffixIcon: IconButton(
-              onPressed: _loading ? null : _find,
-              icon: const Icon(Icons.arrow_forward),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: _search,
+              textInputAction: TextInputAction.search,
+              onSubmitted: (_) => _find(),
+              decoration: InputDecoration(
+                hintText: 'Busque uma receita',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: IconButton(
+                  tooltip: 'Buscar',
+                  onPressed: _loading ? null : _find,
+                  icon: const Icon(Icons.arrow_forward),
+                ),
+              ),
             ),
-          ),
+            const SizedBox(height: 16),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final category in [
+                    (null, 'Todos'),
+                    ('Chicken', 'Frango'),
+                    ('Vegetarian', 'Vegetariano'),
+                    ('Dessert', 'Sobremesa'),
+                  ])
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        label: Text(category.$2),
+                        selected: _category == category.$1,
+                        onSelected: (_) => _filter(category.$1),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _search.text.trim().isEmpty
+                  ? _category == null
+                        ? 'Recomendado para você'
+                        : categoryTitle(_category!)
+                  : 'Resultado da busca',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+          ],
         ),
       ),
       Expanded(
@@ -252,7 +328,13 @@ class _HomeViewState extends State<HomeView> {
             : _error != null
             ? Center(child: Text(_error!))
             : _results.isEmpty
-            ? const Center(child: Text('Pesquise para descobrir receitas.'))
+            ? Center(
+                child: FilledButton.icon(
+                  onPressed: _loadSuggestions,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Carregar receitas'),
+                ),
+              )
             : ListView(
                 children: _results
                     .map((recipe) => RecipeTile(recipe: recipe, onOpen: _open))
@@ -264,10 +346,9 @@ class _HomeViewState extends State<HomeView> {
 }
 
 class RecipeBookView extends StatelessWidget {
-  const RecipeBookView({required this.uid, required this.onOpen, super.key});
+  const RecipeBookView({required this.uid, super.key});
 
   final String uid;
-  final ValueChanged<Recipe> onOpen;
 
   @override
   Widget build(BuildContext context) => StreamBuilder<List<Recipe>>(
@@ -290,13 +371,13 @@ class RecipeBookView extends StatelessWidget {
             .map(
               (recipe) => RecipeTile(
                 recipe: recipe,
-                onOpen: onOpen,
-                actions: [
-                  IconButton(
-                    tooltip: 'Editar',
-                    icon: const Icon(Icons.edit_outlined),
-                    onPressed: () => _edit(context, recipe),
+                onOpen: (recipe) => Navigator.push<void>(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => RecipeDetailsView(recipe: recipe, uid: uid),
                   ),
+                ),
+                actions: [
                   IconButton(
                     tooltip: 'Excluir',
                     icon: const Icon(Icons.delete_outline),
@@ -309,111 +390,6 @@ class RecipeBookView extends StatelessWidget {
       );
     },
   );
-
-  Future<void> _edit(BuildContext context, Recipe recipe) async {
-    final name = TextEditingController(text: recipe.name);
-    final category = TextEditingController(text: recipe.category);
-    final area = TextEditingController(text: recipe.area);
-    final ingredients = TextEditingController(
-      text: recipe.ingredients.join('\n'),
-    );
-    final instructions = TextEditingController(
-      text: recipe.instructions.join('\n'),
-    );
-    final form = GlobalKey<FormState>();
-    final save = await showDialog<bool>(
-      context: context,
-      builder: (dialog) => AlertDialog(
-        title: const Text('Editar receita'),
-        content: SizedBox(
-          width: 420,
-          child: Form(
-            key: form,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextFormField(
-                    controller: name,
-                    decoration: const InputDecoration(labelText: 'Nome'),
-                    validator: (value) => value == null || value.trim().isEmpty
-                        ? 'Obrigatório'
-                        : null,
-                  ),
-                  TextField(
-                    controller: category,
-                    decoration: const InputDecoration(labelText: 'Categoria'),
-                  ),
-                  TextField(
-                    controller: area,
-                    decoration: const InputDecoration(labelText: 'Origem'),
-                  ),
-                  TextField(
-                    controller: ingredients,
-                    minLines: 3,
-                    maxLines: 5,
-                    decoration: const InputDecoration(
-                      labelText: 'Ingredientes (um por linha)',
-                    ),
-                  ),
-                  TextField(
-                    controller: instructions,
-                    minLines: 3,
-                    maxLines: 7,
-                    decoration: const InputDecoration(
-                      labelText: 'Preparo (uma etapa por linha)',
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialog, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              if (!form.currentState!.validate()) return;
-              try {
-                await updateRecipe(
-                  uid,
-                  Recipe(
-                    id: recipe.id,
-                    name: name.text.trim(),
-                    imageUrl: recipe.imageUrl,
-                    category: category.text.trim(),
-                    area: area.text.trim(),
-                    ingredients: _lines(ingredients.text),
-                    instructions: _lines(instructions.text),
-                    source: recipe.source,
-                  ),
-                );
-                if (dialog.mounted) {
-                  Navigator.pop(dialog, true);
-                }
-              } on FirebaseException catch (error) {
-                if (dialog.mounted) {
-                  _message(dialog, 'Falha ao salvar: ${error.message}');
-                }
-              }
-            },
-            child: const Text('Salvar'),
-          ),
-        ],
-      ),
-    );
-    name.dispose();
-    category.dispose();
-    area.dispose();
-    ingredients.dispose();
-    instructions.dispose();
-    if (save == true && context.mounted) {
-      _message(context, 'Receita atualizada.');
-    }
-  }
 
   Future<void> _delete(BuildContext context, Recipe recipe) async {
     final confirmed = await showDialog<bool>(
@@ -436,6 +412,9 @@ class RecipeBookView extends StatelessWidget {
     if (confirmed != true) return;
     try {
       await deleteRecipe(uid, recipe.id);
+      if (context.mounted) {
+        _message(context, 'Receita removida do caderno.');
+      }
     } on FirebaseException catch (error) {
       if (context.mounted) {
         _message(context, 'Falha ao excluir: ${error.message}');
@@ -483,6 +462,9 @@ class _RecipeDetailsViewState extends State<RecipeDetailsView> {
       await saveRecipe(widget.uid, widget.recipe);
       _saved = true;
       _error = null;
+      if (mounted) {
+        _message(context, 'Receita salva no caderno.');
+      }
     } on FirebaseException catch (error) {
       _error = error.message;
     } finally {
@@ -591,12 +573,13 @@ class RecipeTile extends StatelessWidget {
   );
 }
 
-List<String> _lines(String text) => text
-    .split('\n')
-    .map((line) => line.trim())
-    .where((line) => line.isNotEmpty)
-    .toList();
-
 void _message(BuildContext context, String text) {
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 }
+
+String categoryTitle(String category) => switch (category) {
+  'Chicken' => 'Receitas com frango',
+  'Vegetarian' => 'Receitas vegetarianas',
+  'Dessert' => 'Sobremesas',
+  _ => 'Receitas',
+};

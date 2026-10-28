@@ -23,15 +23,6 @@ Future<bool> hasRecipe(String uid, String id) async =>
 Future<void> saveRecipe(String uid, Recipe recipe) =>
     _recipes(uid).doc(recipe.id).set(recipe.toFirestore());
 
-Future<void> updateRecipe(String uid, Recipe recipe) =>
-    _recipes(uid).doc(recipe.id).update({
-      'name': recipe.name,
-      'category': recipe.category,
-      'area': recipe.area,
-      'ingredients': recipe.ingredients,
-      'instructions': recipe.instructions,
-    });
-
 Future<void> deleteRecipe(String uid, String id) =>
     _recipes(uid).doc(id).delete();
 
@@ -41,6 +32,26 @@ Future<List<Recipe>> searchRecipes(String query) async {
       .map(Recipe.fromMeal)
       .where((recipe) => recipe.id.isNotEmpty)
       .toList();
+}
+
+Future<List<Recipe>> filterRecipes(String category) async {
+  final meals = await _request('filter.php', {'c': category});
+  return meals
+      .map(Recipe.fromMeal)
+      .where((recipe) => recipe.id.isNotEmpty)
+      .toList();
+}
+
+Future<List<Recipe>> discoverRecipes() async {
+  final responses = await Future.wait(
+    List.generate(6, (_) => _request('random.php', const {})),
+  );
+  final recipes = responses
+      .expand((meals) => meals)
+      .map(Recipe.fromMeal)
+      .where((recipe) => recipe.id.isNotEmpty)
+      .toList();
+  return {for (final recipe in recipes) recipe.id: recipe}.values.toList();
 }
 
 Future<Recipe> getRecipe(String id) async {
